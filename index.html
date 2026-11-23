@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Perpose Lottery Verifier</title>
+<style>
+  :root { color-scheme: dark; --bg:#111114; --card:#1b1b20; --text:#ececf1; --muted:#9a9aa6; --ok:#7bd88f; --bad:#ff6b6b; --line:#2c2c34; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 system-ui, -apple-system, Segoe UI, sans-serif; }
+  main { max-width:760px; margin:0 auto; padding:32px 16px 64px; }
+  h1 { font-size:24px; margin:0 0 4px; }
+  p.lead { color:var(--muted); margin:0 0 24px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:16px; }
+  label { display:block; font-size:13px; color:var(--muted); margin:10px 0 4px; }
+  input, textarea, select { width:100%; background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:9px 10px; font:inherit; }
+  textarea { min-height:120px; font-family:ui-monospace, Menlo, monospace; font-size:12px; }
+  .row { display:flex; gap:10px; } .row > * { flex:1; }
+  button { margin-top:14px; width:100%; padding:11px; border:0; border-radius:8px; background:#7bd88f; color:#0d1a10; font-weight:600; font-size:15px; cursor:pointer; }
+  button:disabled { opacity:.6; cursor:wait; }
+  details summary { cursor:pointer; color:var(--muted); font-size:13px; margin-top:10px; }
+  #verdict { font-size:20px; font-weight:700; margin-bottom:8px; }
+  .ok { color:var(--ok); } .bad { color:var(--bad); } .skip { color:var(--muted); }
+  ul.checks { list-style:none; padding:0; margin:0; }
+  ul.checks li { padding:8px 0; border-top:1px solid var(--line); }
+  ul.checks code { display:block; color:var(--muted); font-size:12px; word-break:break-all; }
+  pre { white-space:pre-wrap; word-break:break-all; color:var(--muted); font-size:12px; }
+  a { color:#8ab4ff; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Perpose PP Lottery — verifier</h1>
+  <p class="lead">Recomputes a draw from public data: the entries committed at close, the blockhash of a future Solana block, and an open algorithm. Runs entirely in your browser. <a href="https://github.com/memeperp2/lottery-verifier">Source</a>.</p>
+
+  <div class="card">
+    <div class="row">
+      <div><label for="round">Round</label><input id="round" inputmode="numeric" placeholder="e.g. 12"></div>
+      <div><label for="api">API</label>
+        <select id="api"><option value="https://api.perpose.xyz">perpose.xyz</option></select></div>
+    </div>
+    <label for="rpc">Solana RPC (to fetch the blockhash yourself; empty = skip)</label>
+    <input id="rpc" value="https://solana-rpc.publicnode.com">
+    <details><summary>…or paste the verify JSON instead of fetching it</summary>
+      <textarea id="json" placeholder='{"round": 12, "entries": "...", "commit": "...", ...}'></textarea>
+    </details>
+    <button id="go">Verify</button>
+  </div>
+
+  <div class="card" id="result" hidden>
+    <div id="verdict"></div>
+    <ul class="checks" id="checks"></ul>
+  </div>
+
+  <div class="card">
+    <strong>How the draw works</strong>
+    <pre id="algo">1. At close the entries text (round, end, target slot, one line per player: account:wallet:tickets) is fixed and commit = sha256(entries) is published, together with a future Solana slot (~1 min ahead).
+2. blockhash = hash of the first finalized Solana block at or after that slot. Nobody knows it at close; Solana validators do not know the entries.
+3. seed = sha256(commit + ":" + blockhash). rand(n, m) = int(sha256(seed + ":" + n)) mod m.
+4. k = min(places, players) winners: for n = 0..k-1 pick by tickets among those not drawn yet.
+5. Places are shuffled (Fisher–Yates, i = k-1..1, j = rand(n, i+1), n continuing).
+6. A removed winner's place is re-drawn with the next n among those never drawn.</pre>
+  </div>
+</main>
+<script src="verify.js"></script>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const params = new URLSearchParams(location.search);
+  if (params.get('round')) $('round').value = params.get('round');
+  if (params.get('api')) {
+    const o = document.createElement('option');
+    o.value = o.textContent = params.get('api');
+    $('api').append(o);
+    $('api').value = o.value;
+  }
+  if (params.has('rpc')) $('rpc').value = params.get('rpc');
+
+  function show(out, error) {
+    $('result').hidden = false;
+    $('checks').innerHTML = '';
+    if (error) {
+      $('verdict').className = 'bad';
+      $('verdict').textContent = 'Could not verify: ' + error;
+      return;
+    }
+    $('verdict').className = out.ok ? 'ok' : 'bad';
+    $('verdict').textContent = out.ok ? '✓ Fair: the draw recomputes exactly' : '✗ Mismatch';
+    for (const c of out.checks) {
+      const li = document.createElement('li');
+      const mark = c.ok === null ? '–' : c.ok ? '✓' : '✗';
+      li.innerHTML = `<span class="${c.ok === null ? 'skip' : c.ok ? 'ok' : 'bad'}">${mark}</span> `;
+      li.append(c.name);
+      const code = document.createElement('code');
+      code.textContent = c.detail;
+      li.append(code);
+      $('checks').append(li);
+    }
+  }
+
+  $('go').onclick = async () => {
+    $('go').disabled = true;
+    try {
+      let data;
+      const pasted = $('json').value.trim();
+      if (pasted) data = JSON.parse(pasted);
+      else {
+        const id = $('round').value.trim();
+        if (!/^\d+$/.test(id)) throw new Error('enter a round number');
+        const res = await fetch(`${$('api').value}/sapi/v1/waitlist/lottery/verify?id=${id}`);
+        data = await res.json();
+        if (!res.ok) throw new Error(data.msg || res.status);
+      }
+      show(await verifyRound(data, { rpc: $('rpc').value.trim() || null }));
+    } catch (e) {
+      show(null, e.message);
+    } finally {
+      $('go').disabled = false;
+    }
+  };
+  if (params.get('round')) $('go').click();
+</script>
+</body>
+</html>
