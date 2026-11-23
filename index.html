@@ -73,7 +73,7 @@
     $('api').append(o);
     $('api').value = o.value;
   }
-  if (params.has('rpc')) $('rpc').value = params.get('rpc');
+  if (params.get('rpc')) $('rpc').value = params.get('rpc');
 
   function show(out, error) {
     $('result').hidden = false;
