@@ -6,7 +6,7 @@ Open-source check that a Perpose PP Lottery draw was fair. It recomputes the win
 - the blockhash of a Solana block that did not exist yet at close (fetched from any Solana RPC you choose);
 - the algorithm below.
 
-**Web:** https://memeperp2.github.io/lottery-verifier/?round=N — runs in your browser, no build, no dependencies.
+**Web:** https://perposexyz.github.io/lottery-verifier/?round=N — runs in your browser, no build, no dependencies.
 
 **CLI** (Node 18+):
 
